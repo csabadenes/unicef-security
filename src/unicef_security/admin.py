@@ -110,16 +110,22 @@ class UserAdmin2(ExtraUrlMixin, UserAdmin):
         obj = self.get_object(request, pk)
         syncronizer = Synchronizer()
         try:
+            # print('request.method', request.method)
             if request.method == 'POST':
+                print('request.post', request.POST)
+                print('request.POST.get(selection)', request.POST.get('selection'))
                 if request.POST.get('selection'):
                     data = syncronizer.get_user(request.POST.get('selection'))
+                    print('data', data)
                     syncronizer.sync_user(obj, data['id'])
                     self.message_user(request, "User linked")
                     return None
                 else:
+                    print('Select one entry to link!!!!!!!!!!!!!!!!!!!!!!!!!!')
                     ctx['message'] = 'Select one entry to link'
 
             data = syncronizer.search_users(obj)
+            print('data 2', data)
             ctx['data'] = data
             return TemplateResponse(request, 'admin/link_user.html', ctx)
 
