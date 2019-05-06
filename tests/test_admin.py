@@ -2,11 +2,16 @@ import uuid
 
 import mock
 from django.contrib.admin.sites import AdminSite
+from django.contrib.messages import get_messages
+from django.contrib.messages.storage import default_storage
+from django.contrib.messages.storage.fallback import FallbackStorage
 from django.urls import reverse
 
 import pytest
+import requests
 
 from unicef_security import admin
+from unicef_security.graph import DJANGOUSERMAP as sync_field_map
 from unicef_security.models import BusinessArea, Region, User
 
 
@@ -78,26 +83,106 @@ class TestUserAdmin2():
     @pytest.mark.django_db
     @pytest.mark.skip(reason="'impersonate' does not seem to exist")
     def test_impersonate(self, requests_mock):
-        self.user = User()
-        test_req = self.useradmin.impersonate(requests_mock, self.user.id)
+        user = User()
+        test_req = self.useradmin.impersonate(requests_mock, user.id)
         assert test_req.status_code == 200
-        assert test_req.url == reverse('impersonate-start', args=[self.user.id])
+        assert test_req.url == reverse('impersonate-start', args=[user.id])
 
+    @pytest.mark.skip()
     @pytest.mark.django_db
     def test_sync_user(self, requests_mock, monkeypatch):
-        self.user = User(azure_id=uuid.uuid1(), display_name='test_user')
-        self.user.save()
-        with monkeypatch.context() as m:
-            test_azr_return = mock.Mock(return_value={'username': 'uname_test'})
-            m.setattr('unicef_security.graph.Synchronizer.get_token', test_azr_return)
-            m.setattr('unicef_security.graph.Synchronizer.get_page', mock.Mock())
-            self.useradmin.sync_user(requests_mock, self.user.id)
+        user = User(display_name='test_dname', username='test_uname')
+        user.save()
 
-    def test_sync_user_err(self):
-        pass
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_page', mock.Mock())
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_token', mock.Mock())
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_record', mock.Mock())
 
-    def test_link_user_data(self):
-        pass
+        setattr(requests_mock, 'GET', {})
+        setattr(requests_mock, 'META', {})
+        setattr(requests_mock, 'COOKIES', {})
+        setattr(requests_mock, 'session', {})
+        setattr(requests_mock, '_messages', default_storage(requests_mock))
+
+        # test sync without azure id
+        self.useradmin.sync_user(requests_mock, user.id)
+        assert "Cannot sync user without azure_id" == list(get_messages(requests_mock))[0].message
+
+        # reset messages
+        setattr(requests_mock, '_messages', [])
+        # reset message backend storage with an empty message list..
+        setattr(requests_mock, '_messages', default_storage(requests_mock))
+
+        # test sync with azure id
+        user.azure_id = uuid.uuid4()
+        user.save()
+        new_display_name = 'test_new_display_name'
+        updated_usr_info = {'username': user.username}, \
+            {'display_name': new_display_name, 'azure_id': user.azure_id}
+        mock_azr_result = mock.Mock(return_value=updated_usr_info)
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_record', mock_azr_result)
+        self.useradmin.sync_user(requests_mock, user.id)
+        user = User.objects.get(username=user.username)
+        assert "User synchronized" == list(get_messages(requests_mock))[0].message
+        assert user.display_name == new_display_name
+
+    @pytest.mark.django_db
+    def test_link_user_data(self, requests_mock, monkeypatch):
+        user = User(username='test_uname', azure_id=uuid.uuid4())
+        user.save()
+
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_page', mock.Mock())
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_token', mock.Mock())
+        monkeypatch.setattr('unicef_security.graph.Synchronizer.get_record', mock.Mock())
+
+        # a = {'username': user.username}, {'display_name': 'a', 'azure_id': user.azure_id}
+        # monkeypatch.setattr('unicef_security.graph.Synchronizer.get_user', a)
+        # get_user = mock.Mock(return_value={})
+        # get_token = mock.Mock(return_value={})
+        # search_users = mock.Mock(return_value=[])
+        # a = mock.Mock(spec=['get_token'=get_token, 'get_user'=get_user, 'search_users'=search_users])
+        # a = mock.Mock(spec=[get_token, get_user, search_users])
+        # t_a = {'get_token':get_token, 'get_user':get_user, 'search_users':search_users}
+        # a = mock.Mock()
+        # a.configure_mock(**t_a)
+        # monkeypatch.setattr('unicef_security.graph.Synchronizer', a)
+
+        request_spec = {
+            'GET': {},
+            'META': {},
+            'COOKIES': {},
+            'session': {},
+            'method': 'POST',
+        }
+
+        for k, v in request_spec.items():
+            setattr(requests_mock, k, v)
+
+        setattr(requests_mock, '_messages', default_storage(requests_mock))
+        # setattr(requests_mock, 'GET', {})
+        # setattr(requests_mock, 'META', {})
+        # setattr(requests_mock, 'COOKIES', {})
+        # setattr(requests_mock, 'session', {})
+        # setattr(requests_mock, 'method', 'POST')
+        # setattr(requests_mock, '_messages', default_storage(requests_mock))
+
+        # test without user selection
+        test_post = {'selection': None}
+        setattr(requests_mock, 'POST', test_post)
+        self.useradmin.link_user_data(requests_mock, user.id)
+
+        print('1', get_messages(requests_mock))
+        for msg in get_messages(requests_mock):
+            print('1', msg)
+
+        # test with user selection
+        test_post['selection'] = {'id': user.id}
+        setattr(requests_mock, 'POST', test_post)
+        self.useradmin.link_user_data(requests_mock, user.id)
+
+        print('2', get_messages(requests_mock))
+        for msg in get_messages(requests_mock):
+            print('2', msg)
 
     def test_link_user_data_err(self):
         pass
